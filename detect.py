@@ -1,0 +1,193 @@
+import torch
+from mobilenetv2 import MainNet
+from torchvision import transforms
+from PIL import Image,ImageDraw,ImageFont
+import matplotlib.pyplot as plt
+import os
+import utils
+import numpy as np
+import time
+import cv2
+import cfg1
+import torch
+import cfg
+device = "cuda" if torch.cuda.is_available() else "cpu"
+conf = 0.8
+cls_nms = 0.3
+model_path = './model_param1/990.t'
+anchor_group = {
+    13: [[159.0, 309.0], [232.0, 282.0], [335.0, 294.0]],
+    26: [[96.5, 205.5], [184.5, 177.5], [336.5, 117.0]],
+    52: [[15.0, 30.0], [50.0, 56.0], [82.5, 121.5]]
+
+}
+
+class Detector():
+    def __init__(self):
+        self.net = MainNet(len(cfg1.name))
+        self.net.to(device)
+        self.net.load_state_dict(torch.load(model_path))
+        self.transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=(0.485, 0.456, 0.406),
+                std=(0.229, 0.224, 0.225)
+            )
+        ])
+    def detect(self,image):
+        w,h = image.size
+        img = self.transform(image)
+        img.unsqueeze_(0)
+        img = img.to(device)
+        self.net.eval()
+        output_13, output_26, output_52 = self.net(img)
+        idxs_13, vecs_13 = self.filter(output_13, conf)
+        boxes_13 = self.parse(idxs_13, vecs_13, 32, anchor_group[13])
+
+        idxs_26, vecs_26 = self.filter(output_26, conf)
+        boxes_26 = self.parse(idxs_26, vecs_26, 16, anchor_group[26])
+
+        idxs_52, vecs_52 = self.filter(output_52, conf)
+        boxes_52 = self.parse(idxs_52, vecs_52, 8, anchor_group[52])
+        if boxes_13.shape[0] == 0:
+            boxes_13 = boxes_13.reshape(-1,7)
+        if boxes_26.shape[0] == 0:
+            boxes_26 = boxes_26.reshape(-1, 7)
+        if boxes_52.shape[0] == 0:
+            boxes_52 = boxes_52.reshape(-1, 7)
+        return np.vstack([boxes_13, boxes_26, boxes_52])
+
+    def filter(self,output, clsm):
+        output = output.permute(0, 2, 3, 1)
+        output = output.reshape(output.size(0), output.size(1), output.size(2), 3, -1)
+        output = output.cpu().data
+        torch.sigmoid_(output[..., 0])  # 置信度加sigmoid激活
+        torch.sigmoid_(output[..., 1:3])  # 中心点加sigmoid激活
+
+        mask =  output[..., 0] > clsm
+        idxs = mask.nonzero()
+        vecs = output[mask]
+        return idxs, vecs
+
+    def parse(self, idxs, vecs, t, anchors):
+        if idxs.size(0) == 0:
+            return torch.Tensor([])
+        anchors = torch.Tensor(anchors)
+
+
+        n = idxs[:, 0]  # 所属的图片
+        a = idxs[:, 3]  # 建议框
+        conf = vecs[:, 0]  # 置信度
+
+        # （索引值+偏移量）*416/13
+        cy = (idxs[:, 1].float() + vecs[:, 2]) * t  # 原图的中心点y
+        cx = (idxs[:, 2].float() + vecs[:, 1]) * t  # 原图的中心点x
+
+        w = anchors[a, 0] * torch.exp(vecs[:, 3])
+        h = anchors[a, 1] * torch.exp(vecs[:, 4])
+        x1 = cx - w / 2
+        y1 = cy - h / 2
+        x2 = cx + w / 2
+        y2 = cy + h / 2
+        name = vecs[:, 5:]
+
+        if name.shape[0] == 0:
+            name = name.reshape(-1)
+        else:
+            name = torch.argmax(name, dim=1).float()
+
+        np_boxes = torch.stack([n.float(),conf,x1, y1, x2, y2,name], dim=1).numpy()
+        nms = utils.nms(np_boxes,cls_nms,False)
+
+        return nms
+def Square_Generated (image,length): # 创建一个函数用来产生所需要的正方形图片转化
+    w, h = image.size  # 得到图片的大小
+
+    new_image = Image.new('RGB', size=(max(w, h), max(w, h)),color= 'black')  # 创建新的一个图片，大小取长款中最长的一边，color决定了图片中填充的颜色
+
+      # 一侧需要填充的长度
+    if w <= h:
+        box = (length, 0)
+        new_image.paste(image, box)       #产生新的图片
+    else:
+        box =(0, length)
+        print(box)
+        new_image.paste(image, box)
+    new_image = new_image.resize((416,416))
+    return new_image
+def video_show():
+    detector = Detector()
+    cap = cv2.VideoCapture("1.jpg")
+
+    while True:
+        ret, frame = cap.read()
+        if ret:
+            start_time = time.time()
+            img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            im = Image.fromarray(img)
+            width, high = im.size
+            x_w = width / 416
+            y_h = high / 416
+            cropimg = im.resize((416, 416))
+
+            boxes = detector.detect(cropimg)
+
+            for box in boxes:  # 多个框，没循环一次框一个人脸
+                x0 = float(box[1])
+                x1 = int(box[2]*x_w)
+                y1 = int(box[3]*y_h)
+                x2 = int(box[4]*x_w)
+                y2 = int(box[5]*y_h)
+                n = int(box[6])
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255))
+                frame = cv2.putText(frame, cfg.name[n-1]+' '+str("%.2f"%x0), (x1, y1),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+            end_time = time.time()
+            print("time", end_time - start_time)
+            cv2.imshow('a', frame)
+        cv2.waitKey(0)
+def Test():
+    test_path = r"./data/train3.txt"
+    img_path = r"D:\VOCdevkit\VOC2012\JPEGImages"
+    with open(test_path, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            line.strip('\n')
+            data = line.split(',')
+            img = Image.open(os.path.join(img_path, data[0]))
+            width, high = img.size
+            x_w = width / 416
+            y_h = high / 416
+            lenth = int(abs(width - high)/2)
+
+            im = Square_Generated(img,lenth)
+            dector = Detector()
+            boxes = dector.detect(im)
+
+            for box in boxes:  # 多个框，没循环一次框一个人脸
+                if width <= high:
+                    x0 = float(box[1])
+                    x1 = int(box[2]*high/416-lenth)
+                    y1 = int(box[3]*y_h)
+                    x2 = int(box[4]*high/416-lenth)
+                    y2 = int(box[5]*y_h)
+                    n = int(box[6])
+                else:
+                    x0 = float(box[1])
+                    x1 = int(box[2] * x_w)
+                    y1 = int(box[3] * width / 416-lenth)
+                    x2 = int(box[4] * x_w)
+                    y2 = int(box[5] * width / 416-lenth)
+                    n = int(box[6])
+
+                draw = ImageDraw.Draw(img)
+                ttfront = ImageFont.truetype('simhei.ttf', 20)  # 字体大小
+                draw.text((x1, y1 - 30), str(cfg1.name[n - 1]) + ' ' + str("%.2f" % x0), fill=(255, 0, 0), font=ttfront)
+                draw.rectangle((x1, y1, x2, y2), outline="red", width=2)
+            plt.imshow(img)
+            plt.pause(1)
+if __name__ == '__main__':
+    #show = video_show()
+    test = Test()
+
