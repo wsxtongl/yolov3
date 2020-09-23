@@ -12,7 +12,7 @@ import cfg1
 import torch
 import cfg
 device = "cuda" if torch.cuda.is_available() else "cpu"
-conf = 0.7
+conf = 0.75
 cls_nms = 0.3
 model_path = './model_param1/40.t'
 anchor_group = {
@@ -100,7 +100,20 @@ class Detector():
         nms = utils.nms(np_boxes,cls_nms,False)
 
         return nms
+def Square_Generated (image,length): # 创建一个函数用来产生所需要的正方形图片转化
+    w, h = image.size  # 得到图片的大小
 
+    new_image = Image.new('RGB', size=(max(w, h), max(w, h)),color= 'black')  # 创建新的一个图片，大小取长款中最长的一边，color决定了图片中填充的颜色
+
+      # 一侧需要填充的长度
+    if w <= h:
+        box = (length, 0)
+        new_image.paste(image, box)       #产生新的图片
+    else:
+        box =(0, length)
+        new_image.paste(image, box)
+    new_image = new_image.resize((416,416))
+    return new_image
 def video_show():
     detector = Detector()
     cap = cv2.VideoCapture("1.jpg")
@@ -134,31 +147,45 @@ def video_show():
             cv2.imshow('a', frame)
         cv2.waitKey(0)
 def Test():
-    test_path = r"./data/train.txt"
-    img_path = r"./data/image"
+    test_path = r"./data/test.txt"
+    img_path = r"D:\VOCdevkit\VOC2012\JPEGImages"
     with open(test_path, 'r') as f:
         lines = f.readlines()
         for line in lines:
             line.strip('\n')
             data = line.split(',')
             img = Image.open(os.path.join(img_path, data[0]))
+            width, high = img.size
+            x_w = width / 416
+            y_h = high / 416
+            lenth = int(abs(width - high)/2)
+
+            im = Square_Generated(img,lenth)
             dector = Detector()
-            boxes = dector.detect(img)
+            boxes = dector.detect(im)
 
             for box in boxes:  # 多个框，没循环一次框一个人脸
-                x0 = float(box[1])
-                x1 = int(box[2])
-                y1 = int(box[3])
-                x2 = int(box[4])
-                y2 = int(box[5])
-                n = int(box[6])
+                if width <= high:
+                    x0 = float(box[1])
+                    x1 = int(box[2]*high/416-lenth)
+                    y1 = int(box[3]*y_h)
+                    x2 = int(box[4]*high/416-lenth)
+                    y2 = int(box[5]*y_h)
+                    n = int(box[6])
+                else:
+                    x0 = float(box[1])
+                    x1 = int(box[2] * x_w)
+                    y1 = int(box[3] * width / 416-lenth)
+                    x2 = int(box[4] * x_w)
+                    y2 = int(box[5] * width / 416-lenth)
+                    n = int(box[6])
 
                 draw = ImageDraw.Draw(img)
                 ttfront = ImageFont.truetype('simhei.ttf', 20)  # 字体大小
-                draw.text((x1, y1 - 30), str(cfg.name[n]) + ' ' + str("%.2f" % x0), fill=(255, 0, 0), font=ttfront)
+                draw.text((x1, y1 + 30), str(cfg.name[n]) + ' ' + str("%.2f" % x0), fill=(255, 0, 0), font=ttfront)
                 draw.rectangle((x1, y1, x2, y2), outline="red", width=2)
             plt.imshow(img)
-            plt.pause(1)
+            plt.pause(0.5)
 if __name__ == '__main__':
     #show = video_show()
     test = Test()
