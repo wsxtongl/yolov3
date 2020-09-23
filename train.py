@@ -14,7 +14,8 @@ def loss_fn(output, target, alpha):
     cls_loss_fn = torch.nn.CrossEntropyLoss()     #类别
     output = output.permute(0, 2, 3, 1)
     output = output.reshape(output.size(0), output.size(1), output.size(2), 3, -1)
-
+    #conf = torch.sigmoid(prediction[..., 4])
+    #pred_cls = torch.sigmoid(prediction[..., 5:])
     target = target.to(DEVICE)
     mask_obj = target[..., 0] > 0.1
     output_obj = output[mask_obj]
